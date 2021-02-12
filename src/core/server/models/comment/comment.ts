@@ -203,6 +203,69 @@ export async function createComment(
   return { comment, revision };
 }
 
+/** Input to importComment, which is called by the import endpoint.
+ *
+ * The ancestorIDs must have been calculated already by the caller
+ */
+export type ImportCommentInput = Omit<
+  Comment,
+  | "tenantID"
+  // | "ancestorIDs" // calculated from parentId
+  | "revisions"
+  // | "status" // always APPROVED for import
+  | "childIDs" // empty on import; updated when a child is imported/inserted
+  | "childCount" // 0 on import; updated when child is imported/inserted
+> & {
+  revisions: Omit<
+    Revision,
+    "actionCounts" // all empty
+  >[];
+};
+export async function importCommentInMongo(
+  mongo: Db,
+  tenantID: string,
+  input: ImportCommentInput
+) {
+  // Pull out some useful properties from the input.
+  const { revisions: revisionsInput, ...rest } = input;
+
+  if (!(input.revisions.length > 0)) {
+    throw new Error("no revisions in comment");
+  }
+  const revisions: Readonly<Revision>[] = revisionsInput.map(
+    (revisionInput) => {
+      const actionCounts: Revision["actionCounts"] = {};
+      const revision: Readonly<Revision> = {
+        ...revisionInput,
+        actionCounts,
+      };
+      return revision;
+    }
+  );
+
+  // default are the properties set by the application when a new comment is
+  // created.
+  const defaults: Sub<Comment, ImportCommentInput> = {
+    tenantID,
+    childIDs: [],
+    childCount: 0,
+  };
+
+  // Merge the defaults and the input together.
+  const comment: Readonly<Comment> = {
+    // Defaults for things that always stay the same, or are computed.
+    ...defaults,
+    // Rest for things that are passed in and are not actionCounts.
+    ...rest,
+    revisions,
+  };
+
+  // Insert it into the database.
+  await collection(mongo).insertOne(comment);
+
+  return { comment };
+}
+
 /**
  * pushChildCommentIDOntoParent will push the new child comment's ID onto the
  * parent comment so it can reference direct children.

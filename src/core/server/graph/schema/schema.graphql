@@ -4133,6 +4133,72 @@ type CreateCommentPayload {
   clientMutationId: String!
 }
 
+input ImportCommentRevision {
+  id: ID!
+  body: ID!
+  createdAt: Time!
+  media: CreateCommentMediaInput
+}
+
+"""
+ImportCommentInput provides the input for the importComment Mutation.
+"""
+input ImportCommentInput {
+  """
+  ID of the comment (so that parent ids can be resolved)
+  """
+  id: ID!
+
+  """
+  Same as the first revision's createdAt?
+  """
+  createdAt: Time!
+
+  """
+  ID of the user to insert the comment as
+  """
+  userID: ID!
+
+  """
+  nudge when true will instead return an error related to recoverable moderation
+  faults such as a toxic comment or spam comment to provide user feedback to
+  nudge the user to correct the comment.
+  """
+  nudge: Boolean = false
+
+  """
+  storyID is the ID of the Story where we are creating a comment on.
+  """
+  storyID: ID!
+
+  revisions: [ImportCommentRevision!]!
+  """
+  clientMutationId is required for Relay support.
+  """
+  clientMutationId: String!
+
+  """
+  rating is the optional rating that can be added to a Comment.
+  """
+  rating: Int
+}
+
+"""
+ImportCommentPayload contains the created Comment after the importComment
+mutation.
+"""
+type ImportCommentPayload {
+  """
+  edge is the possibly created comment edge.
+  """
+  edge: CommentEdge!
+
+  """
+  clientMutationId is required for Relay support.
+  """
+  clientMutationId: String!
+}
+
 """
 CreateCommentMediaInput is used for creating media to be attached to a Comment.
 """
@@ -4162,6 +4228,7 @@ input CreateCommentMediaInput {
   """
   height: String
 }
+
 
 ##################
 ## createCommentReply
@@ -7719,6 +7786,12 @@ type Mutation {
   createComment(input: CreateCommentInput!): CreateCommentPayload!
     @auth
     @rate(seconds: 3, key: "createComment")
+
+  """
+  importComment will create a Comment as the current logged in User.
+  """
+  importComment(input: ImportCommentInput!): ImportCommentPayload!
+    @auth(roles: [ADMIN])
 
   """
   createCommentReply will create a Comment as the current logged in User that is

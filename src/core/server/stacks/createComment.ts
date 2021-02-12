@@ -17,6 +17,8 @@ import {
   CommentMedia,
   createComment,
   CreateCommentInput,
+  importCommentInMongo,
+  ImportCommentInput,
   pushChildCommentIDOntoParent,
   retrieveAuthorStoryRating,
 } from "coral-server/models/comment";
@@ -40,6 +42,7 @@ import {
   CreateCommentMediaInput,
 } from "coral-server/services/comments/media";
 import {
+  ModerationPhaseContextInput,
   PhaseResult,
   processForModeration,
 } from "coral-server/services/comments/pipeline";
@@ -367,6 +370,274 @@ export default async function create(
     ...counts,
     after: comment,
     commentRevisionID: revision.id,
+  });
+
+  return comment;
+}
+
+export type ImportComment = Omit<
+  ImportCommentInput,
+  | "status"
+  | "ancestorIDs"
+  | "actionCounts"
+  | "tags"
+  | "siteID"
+  | "media"
+  | "revisions"
+> & {
+  rating?: number;
+  revisions: (Omit<
+    ImportCommentInput["revisions"][number],
+    "metadata" | "media"
+  > & {
+    media?: CreateCommentMediaInput;
+  })[];
+};
+/**
+ * Copy of create() above, with modifications:
+ * * Revisions
+ * * No now parameter; use createdAt from the revision instead
+ */
+export async function importComment(
+  mongo: Db,
+  redis: AugmentedRedis,
+  config: Config,
+  broker: CoralEventPublisherBroker,
+  tenant: Tenant,
+  author: User,
+  input: ImportComment,
+  nudge: boolean,
+  req?: Request
+): Promise<Readonly<Comment>> {
+  let log = logger.child(
+    {
+      authorID: author.id,
+      tenantID: tenant.id,
+      storyID: input.storyID,
+      parentID: input.parentID,
+      nudge,
+    },
+    true
+  );
+
+  log.trace("creating comment on story");
+
+  // Grab the story that we'll use to check moderation pieces with.
+  const story = await retrieveStory(mongo, tenant.id, input.storyID);
+  if (!story) {
+    throw new StoryNotFoundError(input.storyID);
+  }
+
+  // Get the story mode of this Story.
+  const storyMode = resolveStoryMode(story.settings, tenant);
+
+  // Perform some extra validation depending on the story mode.
+  if (isNumber(input.rating)) {
+    if (storyMode !== GQLSTORY_MODE.RATINGS_AND_REVIEWS) {
+      throw new Error(
+        "rating submitted on story not in ratings and review mode"
+      );
+    }
+
+    // Looks like the rating has been provided. Ensure that this is not a reply,
+    // because replies cannot have a rating.
+    if (input.parentID) {
+      throw new Error("replies cannot contain a rating");
+    }
+
+    // Validate that the rating is a valid number.
+    await validateRating(mongo, tenant, author, story, input.rating);
+  }
+
+  const parent = await retrieveParent(mongo, tenant.id, input);
+  const ancestorIDs: string[] = parent
+    ? [parent.id, ...parent.ancestorIDs]
+    : [];
+
+  const { revisions, ...rest } = input;
+  if (!(revisions.length > 0)) {
+    throw new Error("Comment must have at least one revision");
+  }
+  const latestRevision = revisions[revisions.length - 1]; // copy of getLatestRevision
+  const firstRevision = revisions[0];
+
+  const results: PhaseResult[] = [];
+  const medias: (CommentMedia | undefined)[] = [];
+  for (const [i, revision] of revisions.entries()) {
+    const body = revision.body;
+    const media: CommentMedia | undefined = revision.media
+      ? await attachMedia(tenant, revision.media, body)
+      : undefined;
+    const action: ModerationPhaseContextInput["action"] =
+      i === 0 ? "NEW" : "EDIT";
+    const commentForModeration: ModerationPhaseContextInput["comment"] = {
+      ...rest,
+      body,
+      ancestorIDs,
+    };
+    let result: PhaseResult;
+    try {
+      // Run the comment through the moderation phases.
+      result = await processForModeration({
+        action,
+        log,
+        mongo,
+        redis,
+        config,
+        tenant,
+        story,
+        storyMode,
+        nudge,
+        parent,
+        comment: commentForModeration,
+        author,
+        req,
+        now: revision.createdAt,
+        media,
+      });
+    } catch (err) {
+      if (
+        err instanceof CoralError &&
+        err.type === ERROR_TYPES.MODERATION_NUDGE_ERROR
+      ) {
+        log.info({ err }, "detected pipeline nudge");
+      }
+
+      throw err;
+    }
+    results.push(result);
+    medias.push(media);
+  }
+  const moderatedRevisions: ImportCommentInput["revisions"] = revisions.map(
+    (revision, i) => ({
+      ...revision,
+      metadata: results[i].metadata,
+      media: medias[i],
+    })
+  );
+  const result = results[results.length - 1];
+
+  // This is the first time this comment is being published.. So we need to
+  // ensure we don't run into any race conditions when we create the comment.
+  // One of the situations where we could encounter a race is when the comment
+  // is created, and does not have it's flag data associated with it. This would
+  // cause the comment to not be added to the flagged queue. If a flag is
+  // pending, and a user flags this comment before the next step can proceed,
+  // then we would end up double adding the comment to the flagged queue.
+  // Instead, we need to add the action metadata to the comment before we add it
+  // for the first time to ensure that the data is there for when the next flag
+  // is added, that it can already know that the comment is already in the
+  // queue.
+  let actionCounts: EncodedCommentActionCounts = {};
+  if (result.actions.length > 0) {
+    // Determine the unique actions, we will use this to compute the comment
+    // action counts. This should match what is added below.
+    actionCounts = encodeActionCounts(
+      ...filterDuplicateActions(result.actions)
+    );
+  }
+
+  const commentInput: ImportCommentInput = {
+    ...input,
+    siteID: story.siteID,
+    // Copy the current story section into the comment if it exists.
+    section: story.metadata?.section,
+    // Remap the tags to include the createdAt.
+    tags: result.tags.map((tag) => ({
+      type: tag,
+      createdAt: firstRevision.createdAt,
+    })),
+    status: result.status,
+    ancestorIDs,
+    actionCounts,
+    revisions: moderatedRevisions,
+  };
+
+  // Create the comment!
+  const { comment } = await importCommentInMongo(
+    mongo,
+    tenant.id,
+    commentInput
+  );
+
+  log = log.child(
+    {
+      commentID: comment.id,
+      status: result.status,
+      revisionID: firstRevision.id,
+    },
+    true
+  );
+
+  // Updating some associated data.
+  await Promise.all([
+    updateUserLastCommentID(redis, tenant, author, comment.id),
+    updateStoryLastCommentedAt(
+      mongo,
+      tenant.id,
+      story.id,
+      latestRevision.createdAt
+    ),
+    markCommentAsAnswered(
+      mongo,
+      redis,
+      broker,
+      tenant,
+      comment,
+      story,
+      author,
+      latestRevision.createdAt
+    ),
+  ]);
+
+  log.trace("comment created");
+
+  if (input.parentID) {
+    // Push the child's ID onto the parent.
+    await pushChildCommentIDOntoParent(
+      mongo,
+      tenant.id,
+      input.parentID,
+      comment.id
+    );
+
+    log.trace("pushed child comment id onto parent");
+  }
+
+  if (result.actions.length > 0) {
+    // Actually add the actions to the database. This will not interact with the
+    // counts at all.
+    await addCommentActions(
+      mongo,
+      tenant,
+      result.actions.map(
+        (action): CreateAction => ({
+          ...action,
+          commentID: comment.id,
+          commentRevisionID: latestRevision.id,
+          storyID: story.id,
+          siteID: story.siteID,
+
+          // All these actions are created by the system.
+          userID: null,
+        })
+      ),
+      latestRevision.createdAt
+    );
+  }
+
+  // Update all the comment counts on stories and users.
+  const counts = await updateAllCommentCounts(mongo, redis, {
+    tenant,
+    actionCounts,
+    after: comment,
+  });
+
+  // Publish changes to the event publisher.
+  await publishChanges(broker, {
+    ...counts,
+    after: comment,
+    commentRevisionID: latestRevision.id,
   });
 
   return comment;

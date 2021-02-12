@@ -14,6 +14,15 @@ export const Mutation: Required<GQLMutationTypeResolver<void>> = {
     },
     clientMutationId: input.clientMutationId,
   }),
+  importComment: async (source, { input }, ctx) => ({
+    edge: {
+      // Depending on the sort we can't determine the accurate cursor in a
+      // performant way, so we return an empty string.
+      cursor: "",
+      node: await ctx.mutators.Comments.importComment(input),
+    },
+    clientMutationId: input.clientMutationId,
+  }),
   createCommentReply: async (source, { input }, ctx) => ({
     edge: {
       // Depending on the sort we can't determine the accurate cursor in a

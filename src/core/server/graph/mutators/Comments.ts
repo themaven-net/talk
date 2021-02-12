@@ -17,6 +17,7 @@ import {
   approveComment,
   createComment,
   editComment,
+  importComment,
 } from "coral-server/stacks";
 
 import {
@@ -29,12 +30,14 @@ import {
   GQLEditCommentInput,
   GQLFEATURE_FLAG,
   GQLFeatureCommentInput,
+  GQLImportCommentInput,
   GQLRemoveCommentDontAgreeInput,
   GQLRemoveCommentReactionInput,
   GQLTAG,
   GQLUnfeatureCommentInput,
 } from "coral-server/graph/schema/__generated__/types";
 
+import { ImportComment } from "coral-server/stacks/createComment";
 import { validateUserModerationScopes } from "./helpers";
 import { validateMaximumLength, WithoutMutationID } from "./util";
 
@@ -65,6 +68,44 @@ export const Comments = (ctx: GraphContext) => ({
       ),
       {
         "input.body": [
+          ERROR_CODES.COMMENT_BODY_EXCEEDS_MAX_LENGTH,
+          ERROR_CODES.COMMENT_BODY_TOO_SHORT,
+        ],
+        "input.parentID": [ERROR_CODES.COMMENT_NOT_FOUND],
+        "input.storyID": [ERROR_CODES.STORY_NOT_FOUND],
+      }
+    ),
+  importComment: ({
+    clientMutationId,
+    nudge = false,
+    userID,
+    ...comment
+  }: GQLImportCommentInput) =>
+    mapFieldsetToErrorCodes(
+      importComment(
+        ctx.mongo,
+        ctx.redis,
+        ctx.config,
+        ctx.broker,
+        ctx.tenant,
+        ctx.user!,
+        {
+          ...comment,
+          authorID: userID,
+          revisions: comment.revisions.map(
+            ({ media, ...revision }): ImportComment["revisions"][number] => ({
+              ...revision,
+              // TODO: (wyattjoh) check this type to get it to match.
+              // (type is string in graphql but an finite set of strings in CreateCommentMediaInput)
+              media: media as CreateCommentMediaInput,
+            })
+          ),
+        },
+        nudge,
+        ctx.req
+      ),
+      {
+        "input.revisions[-1].body": [
           ERROR_CODES.COMMENT_BODY_EXCEEDS_MAX_LENGTH,
           ERROR_CODES.COMMENT_BODY_TOO_SHORT,
         ],

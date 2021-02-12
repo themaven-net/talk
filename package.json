@@ -24,7 +24,7 @@
     "clean": "gulp clean",
     "build": "NODE_ENV=production npm-run-all generate-persist --parallel build:client build:server",
     "build:development": "NODE_ENV=development npm-run-all generate --parallel build:client build:server",
-    "build:client": "ts-node --transpile-only ./scripts/build.ts",
+    "build:client": "node --max-old-space-size=4096 --require=ts-node/register/transpile-only ./scripts/build.ts",
     "build:server": "gulp server",
     "migration:create": "ts-node --transpile-only ./scripts/migration/create.ts",
     "docs:events": "ts-node ./scripts/generateEventDocs.ts ./src/core/client/stream/events.ts ./CLIENT_EVENTS.md",
