@@ -522,11 +522,6 @@ enum FEATURE_FLAG {
   FLATTEN_REPLIES
 
   """
-  ENABLE_AMP will enable support for embedding Coral within AMP pages.
-  """
-  ENABLE_AMP
-
-  """
   DISABLE_LIVE_UPDATES will disable live updates at the tenant level and
   overrides the configuration option available in the Admin UI for that tenant.
   """
@@ -2003,6 +1998,11 @@ type Settings @cacheControl(maxAge: 30) {
   memberBios is whether members can define a bio for their account.
   """
   memberBios: Boolean!
+
+  """
+  amp is whether Accelerated Mobile Pages Support is activated.
+  """
+  amp: Boolean!
 }
 
 ################################################################################
@@ -5191,6 +5191,11 @@ input SettingsInput {
   memberBios is whether members can define a bio for their account.
   """
   memberBios: Boolean
+
+  """
+  amp is whether Accelerated Mobile Pages Support is activated.
+  """
+  amp: Boolean
 }
 
 """

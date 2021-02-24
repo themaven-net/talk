@@ -294,6 +294,11 @@ export type Settings = GlobalModerationSettings &
      * staff configures the labels for staff members in comment stream.
      */
     staff: StaffConfiguration;
+
+    /**
+     * amp activates Accelerated Mobile Pages support.
+     */
+    amp?: boolean;
   };
 
 export const defaultRTEConfiguration: RTEConfiguration = {
