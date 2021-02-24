@@ -256,6 +256,7 @@ export async function createTenant(
     stories: {
       scraping: {
         enabled: true,
+        authentication: false,
       },
       disableLazy: false,
     },
@@ -315,7 +316,7 @@ export async function retrieveManyTenants(
 
 export async function retrieveManyTenantsByDomain(
   mongo: Db,
-  domains: string[]
+  domains: ReadonlyArray<string>
 ) {
   const cursor = collection(mongo).find({
     domain: {

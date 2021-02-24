@@ -1383,6 +1383,11 @@ configure-advanced-stories-custom-user-agent-detail =
   When specified, overrides the <code>User-Agent</code> header sent with each
   scrape request.
 
+configure-advanced-stories-authentication = Authentication
+configure-advanced-stories-scrapingCredentialsHeader = Scraping credentials
+configure-advanced-stories-scraping-usernameLabel = Username
+configure-advanced-stories-scraping-passwordLabel = Password
+
 commentAuthor-status-banned = Banned
 commentAuthor-status-premod = Pre-mod
 commentAuthor-status-suspended = Suspended

@@ -31,4 +31,5 @@ export const Settings: GQLSettingsTypeResolver<Tenant> = {
   premoderateSuspectWords: ({ premoderateSuspectWords = false }) =>
     premoderateSuspectWords,
   amp: (parent, args, ctx) => isAMPEnabled(ctx.tenant),
+  stories: ({ stories }) => stories,
 };
