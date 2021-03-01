@@ -1,0 +1,47 @@
+version: "2"
+services:
+  talk:
+    # image: coralproject/talk:6
+    image: node:12-alpine3.12
+    volumes:
+      - ..:/usr/src/app
+      - ~/.npm-linux:/root/.npm
+    working_dir: /usr/src/app
+    # https://docs.npmjs.com/common-errors#npm-only-uses-git-and-sshgit-urls-for-github-repos-breaking-proxies
+    # apk add git && printf '[url "https://github.com/"]\ninsteadOf = git@github.com:\n' > ~/.gitconfig && npm ci
+    # command: node dist/index.js
+    
+    # ts-node-dev: source-map doesn't seem to work
+    # command: npm run start:development
+    command: npm run start:ts-node
+
+    restart: always
+    ports:
+      - "127.0.0.1:3003:3000"
+      - "127.0.0.1:9003:9000" # metrics
+      - "127.0.0.1:9233:9229" # inspect
+    depends_on:
+      - mongo
+      - redis
+    environment:
+      - PORT=3000
+      - MONGODB_URI=mongodb://mongo:27017/coral
+      - REDIS_URI=redis://redis:6379
+      - SIGNING_SECRET=<replace me with something secret>
+      - ENABLE_GRAPHIQL=true
+  mongo:
+    image: mongo:4.2
+    volumes:
+      - ./data/mongo:/data/db
+    # to connect interactively, docker-compose run --rm mongo mongo --host=mongo
+  redis:
+    image: redis:3.2
+    volumes:
+      - ./data/redis:/data
+  website:
+    image: nginx:alpine
+    volumes:
+      - ./website:/usr/share/nginx/html:ro
+    ports:
+      - "127.0.0.1:8888:80"
+
